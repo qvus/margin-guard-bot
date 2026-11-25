@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
@@ -41,7 +42,8 @@ def build_router(database_path: str | Path, cipher: TokenCipher) -> Router:
             "Привет! Я помогу отслеживать товары и их маржу на Wildberries.\n\n"
             "Подключите WB API токен только на чтение командой /connect. "
             "Я не умею менять цены, скидки, карточки или остатки.\n\n"
-            "Команды: /connect, /products, /cost, /threshold, /status, /delete_me."
+            "Команды: /connect, /products, /cost, /fees, /threshold, /status, "
+            "/pause, /resume, /delete_me."
         )
 
     @router.message(Command("connect"))
@@ -165,6 +167,45 @@ def build_router(database_path: str | Path, cipher: TokenCipher) -> Router:
         repository.set_threshold(database_path, message.from_user.id, format(value, "f"))
         await message.answer(f"Порог маржи установлен: {format(value, 'f')}%.")
 
+    @router.message(Command("fees"))
+    async def fees(message: Message) -> None:
+        if not await require_private_chat(message):
+            return
+        assert message.from_user is not None
+        args = _command_args(message)
+        if len(args) < 2:
+            await message.answer(
+                "Укажите default для значений по умолчанию или артикул WB. "
+                "Формат: /fees default commission=10% logistics=50 tax=6%\n"
+                "Значение можно задать суммой (50), процентом (6%) или обоими "
+                "(50+6%). Хранение и реклама необязательны.\n"
+                "Для товара: /fees 123456789 commission=12%. Чтобы вернуть "
+                "категорию товара к значению по умолчанию: commission=default."
+            )
+            return
+        scope, *assignments = args
+        try:
+            values = _parse_fee_assignments(assignments)
+        except ValueError as exc:
+            await message.answer(str(exc))
+            return
+        if scope == "default":
+            repository.set_expenses(
+                database_path, message.from_user.id, values
+            )
+            await message.answer("Расходы по умолчанию сохранены.")
+            return
+        if not scope.isdigit():
+            await message.answer("Первым параметром укажите default или числовой артикул WB.")
+            return
+        saved = repository.set_expenses(
+            database_path, message.from_user.id, values, nm_id=scope
+        )
+        if not saved:
+            await message.answer("Товар не найден. Сначала загрузите его командой /products.")
+            return
+        await message.answer(f"Расходы для товара {scope} сохранены.")
+
     @router.message(Command("status"))
     async def status(message: Message) -> None:
         if not await require_private_chat(message):
@@ -176,11 +217,52 @@ def build_router(database_path: str | Path, cipher: TokenCipher) -> Router:
             return
         count = len(repository.list_products(database_path, user["id"]))
         connected = "подключён" if user["wb_token_encrypted"] else "не подключён"
+        monitoring = "включён" if user["monitoring_enabled"] else "приостановлен"
+        default_expenses = json.loads(user["expense_defaults_json"] or "{}")
+        missing = [
+            name
+            for name in ("commission", "logistics", "tax")
+            if name not in default_expenses
+        ]
+        expense_status = (
+            "Не заданы общие " + ", ".join(missing) + "; настройте /fees"
+            if missing
+            else "Общие расходы настроены"
+        )
         await message.answer(
             f"WB токен: {connected}\n"
             f"Товаров в списке: {count}\n"
-            f"Порог маржи: {user['margin_threshold']}%"
+            f"Порог маржи: {user['margin_threshold']}%\n"
+            f"Мониторинг: {monitoring}\n"
+            f"Расходы: {expense_status}"
         )
+
+    @router.message(Command("pause"))
+    async def pause(message: Message) -> None:
+        if not await require_private_chat(message):
+            return
+        assert message.from_user is not None
+        changed = repository.set_monitoring_enabled(
+            database_path, message.from_user.id, False
+        )
+        await message.answer(
+            "Проверки приостановлены." if changed else "Сначала выполните /start."
+        )
+
+    @router.message(Command("resume"))
+    async def resume(message: Message) -> None:
+        if not await require_private_chat(message):
+            return
+        assert message.from_user is not None
+        user = repository.get_user(database_path, message.from_user.id)
+        if user is None:
+            await message.answer("Сначала выполните /start.")
+            return
+        if not user["wb_token_encrypted"]:
+            await message.answer("Сначала подключите WB API токен командой /connect.")
+            return
+        repository.set_monitoring_enabled(database_path, message.from_user.id, True)
+        await message.answer("Проверки возобновлены.")
 
     @router.message(Command("delete_me"))
     async def delete_me(message: Message) -> None:
@@ -199,6 +281,52 @@ def build_router(database_path: str | Path, cipher: TokenCipher) -> Router:
 def _command_args(message: Message) -> list[str]:
     parts = (message.text or "").split()
     return parts[1:] if parts else []
+
+
+def _parse_fee_assignments(
+    assignments: list[str],
+) -> dict[str, dict[str, str] | None]:
+    allowed = {"commission", "logistics", "tax", "storage", "advertising"}
+    if not assignments:
+        raise ValueError("Укажите хотя бы один расход в формате имя=значение.")
+    parsed: dict[str, dict[str, str] | None] = {}
+    for assignment in assignments:
+        if "=" not in assignment:
+            raise ValueError("Расходы задаются как имя=значение, например commission=10%.")
+        name, raw_value = assignment.split("=", maxsplit=1)
+        if name not in allowed:
+            raise ValueError(
+                "Допустимые расходы: commission, logistics, tax, storage, advertising."
+            )
+        if name in parsed:
+            raise ValueError(f"Расход {name} указан несколько раз.")
+        value = raw_value.replace(",", ".")
+        if value == "default":
+            parsed[name] = None
+            continue
+
+        fixed = Decimal("0")
+        percent = Decimal("0")
+        try:
+            if "+" in value:
+                fixed_text, percent_text = value.split("+", maxsplit=1)
+                if not percent_text.endswith("%"):
+                    raise ValueError
+                fixed = Decimal(fixed_text)
+                percent = Decimal(percent_text[:-1])
+            elif value.endswith("%"):
+                percent = Decimal(value[:-1])
+            else:
+                fixed = Decimal(value)
+        except (InvalidOperation, ValueError) as exc:
+            raise ValueError(
+                f"Некорректное значение для {name}: используйте сумму, процент "
+                "или сумму+процент, например 50+5%."
+            ) from exc
+        if not fixed.is_finite() or not percent.is_finite() or fixed < 0 or percent < 0:
+            raise ValueError("Суммы и проценты расходов должны быть конечными числами от нуля.")
+        parsed[name] = {"fixed": format(fixed, "f"), "percent": format(percent, "f")}
+    return parsed
 
 
 def _fetch_products(token: str) -> list[dict[str, Any]]:

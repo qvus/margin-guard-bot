@@ -25,6 +25,8 @@ def initialize_database(database_path: str | Path) -> None:
                 telegram_id INTEGER UNIQUE,
                 wb_token_encrypted TEXT,
                 margin_threshold TEXT NOT NULL DEFAULT '0',
+                expense_defaults_json TEXT NOT NULL DEFAULT '{}',
+                monitoring_enabled INTEGER NOT NULL DEFAULT 1,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
 
@@ -37,6 +39,10 @@ def initialize_database(database_path: str | Path) -> None:
                 title TEXT,
                 product_data_json TEXT,
                 cost_price TEXT,
+                expense_overrides_json TEXT NOT NULL DEFAULT '{}',
+                last_margin_state TEXT,
+                last_margin TEXT,
+                last_price TEXT,
                 UNIQUE (user_id, marketplace, marketplace_product_id)
             );
             """
@@ -48,6 +54,8 @@ def initialize_database(database_path: str | Path) -> None:
             {
                 "wb_token_encrypted": "TEXT",
                 "margin_threshold": "TEXT NOT NULL DEFAULT '0'",
+                "expense_defaults_json": "TEXT NOT NULL DEFAULT '{}'",
+                "monitoring_enabled": "INTEGER NOT NULL DEFAULT 1",
             },
         )
         _ensure_columns(
@@ -57,6 +65,10 @@ def initialize_database(database_path: str | Path) -> None:
                 "vendor_code": "TEXT",
                 "title": "TEXT",
                 "product_data_json": "TEXT",
+                "expense_overrides_json": "TEXT NOT NULL DEFAULT '{}'",
+                "last_margin_state": "TEXT",
+                "last_margin": "TEXT",
+                "last_price": "TEXT",
             },
         )
 

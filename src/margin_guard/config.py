@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from pydantic import SecretStr
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     database_path: Path = Path("data/margin_guard.sqlite3")
     telegram_bot_token: SecretStr | None = None
     token_encryption_key: SecretStr | None = None
+    monitoring_interval_minutes: int = Field(default=45, ge=30, le=60)
 
     model_config = SettingsConfigDict(
         env_file=".env",

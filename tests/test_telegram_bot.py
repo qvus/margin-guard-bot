@@ -181,3 +181,41 @@ def test_cost_threshold_status_and_delete_me_commands(tmp_path):
     delete_message = _message("/delete_me")
     asyncio.run(_callback(router, "delete_me")(delete_message))
     assert repository.get_user(db, 123) is None
+
+
+def test_fees_command_saves_defaults_and_product_overrides(tmp_path):
+    db = tmp_path / "bot.sqlite3"
+    initialize_database(db)
+    router = build_router(db, TokenCipher(Fernet.generate_key()))
+    user = repository.get_or_create_user(db, 123)
+    repository.save_products(db, user["id"], [{"card": {"nmID": 456, "title": "Item"}}])
+
+    default_message = _message(
+        "/fees default commission=10% logistics=50 tax=6% storage=0 advertising=5+1%"
+    )
+    asyncio.run(_callback(router, "fees")(default_message))
+    stored_defaults = repository.get_user(db, 123)["expense_defaults_json"]
+    assert "10" in stored_defaults
+    assert "50" in stored_defaults
+
+    product_message = _message("/fees 456 commission=12% logistics=default")
+    asyncio.run(_callback(router, "fees")(product_message))
+    product_row = repository.list_products(db, user["id"])[0]
+    assert '"commission"' in product_row["expense_overrides_json"]
+    assert '"logistics"' not in product_row["expense_overrides_json"]
+
+
+def test_pause_and_resume_commands_update_monitoring_status(tmp_path):
+    db = tmp_path / "bot.sqlite3"
+    initialize_database(db)
+    cipher = TokenCipher(Fernet.generate_key())
+    router = build_router(db, cipher)
+    repository.save_encrypted_token(db, 123, cipher.encrypt("token"))
+
+    pause_message = _message("/pause")
+    asyncio.run(_callback(router, "pause")(pause_message))
+    assert repository.get_user(db, 123)["monitoring_enabled"] == 0
+
+    resume_message = _message("/resume")
+    asyncio.run(_callback(router, "resume")(resume_message))
+    assert repository.get_user(db, 123)["monitoring_enabled"] == 1
