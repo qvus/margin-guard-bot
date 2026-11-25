@@ -1,0 +1,1 @@
+"""External marketplace HTTP adapters."""
