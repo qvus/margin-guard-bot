@@ -3,21 +3,26 @@
 .env.*
 !.env.example
 
-# Python
+# Python & tooling caches
 __pycache__/
 *.py[cod]
 *.pyo
 *.egg-info/
 .pytest_cache/
+.mypy_cache/
+.ruff_cache/
 .venv/
 venv/
 .idea/
+.vscode/
 
 # Local data and generated files
 data/
 *.db
 *.sqlite
 *.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
 dist/
 build/
 .coverage
