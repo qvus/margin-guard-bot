@@ -1,6 +1,7 @@
 """Initialize the application and start the Telegram bot."""
 
 import asyncio
+import logging
 
 from aiogram import Bot, Dispatcher
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -12,9 +13,23 @@ from .telegram_bot import build_router
 from .token_encryption import TokenCipher
 
 
+def configure_logging() -> None:
+    """Enable application logs while suppressing potentially sensitive SDK logs."""
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
+    for logger_name in ("aiogram", "httpx", "httpcore", "apscheduler"):
+        logging.getLogger(logger_name).setLevel(logging.WARNING)
+
+
+logger = logging.getLogger("margin_guard")
+
+
 async def _run_bot(
     bot: Bot, dispatcher: Dispatcher, settings: Settings, cipher: TokenCipher
 ) -> None:
+    logger.info("Starting margin monitoring every %s minutes", settings.monitoring_interval_minutes)
     scheduler = AsyncIOScheduler()
     scheduler.add_job(
         run_monitoring_cycle,
@@ -31,9 +46,11 @@ async def _run_bot(
     finally:
         scheduler.shutdown(wait=False)
         await bot.session.close()
+        logger.info("Bot stopped")
 
 
 def main() -> None:
+    configure_logging()
     settings = get_settings()
     initialize_database(settings.database_path)
     print(f"База данных готова: {settings.database_path}")
