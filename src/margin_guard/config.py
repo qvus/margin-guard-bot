@@ -2,14 +2,17 @@
 
 from pathlib import Path
 
+from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    """Small stage-one configuration; secrets are added with the bot integration."""
+    """Application settings loaded from environment variables or .env."""
 
     app_env: str = "development"
     database_path: Path = Path("data/margin_guard.sqlite3")
+    telegram_bot_token: SecretStr | None = None
+    token_encryption_key: SecretStr | None = None
 
     model_config = SettingsConfigDict(
         env_file=".env",
